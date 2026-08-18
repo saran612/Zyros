@@ -1,0 +1,16 @@
+# Rust
+/target
+Cargo.lock
+
+# Tauri
+src-tauri/target
+src-tauri/gen
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Zyros artifacts
+/zyros.log
+/.zyros_history
+/project.md
