@@ -1,0 +1,361 @@
+pub mod sanitizer;
+
+use std::error::Error;
+use zyros_llm::OllamaClient;
+pub use sanitizer::QuerySanitizer;
+pub use zyros_planner::Intent;
+use zyros_commands::{ProcessSort, KnownApp};
+
+pub struct NluEngine {
+    llm_client: OllamaClient,
+    sanitizer: QuerySanitizer,
+}
+
+fn build_classification_prompt(query: &str) -> String {
+    format!(
+        r#"You are a strict intent classifier for a Linux system assistant. Classify the user's query into EXACTLY ONE of these intents:
+
+GET_SYS_INFO - queries about ram, memory, cpu, processor, system resources, general system status/health
+DISK_SPACE_ISSUE - queries about disk, storage, space, "no space left", drive usage
+CREATE_FILE - touches or creates empty files
+READ_FILE - views file contents using cat
+EDIT_FILE - opens a text editor like nano to edit a file
+MOVE_FILE - moves/renames files from source to destination
+COPY_FILE - copies files from source to destination
+OPEN_APP - opens generic resource/folders via xdg-open
+LIST_PROCESSES - lists running processes, optionally sorting by CPU, MEMORY, or PID. Might ask for "full" process list.
+KILL_PROCESS - kills/terminates/stops a process by name or PID
+LAUNCH_PROCESS - starts/runs a bounded set of processes: FIREFOX, TERMINAL, FILE_MANAGER, TEXT_EDITOR
+GET_IP_ADDRESS - queries about IP address, IP configurations, local IP
+GET_ROUTING_TABLE - queries about network route, routing table, gateway
+CHECK_INTERNET - checks connection to internet, ping test, network check
+CHECK_WIFI - checks wifi connections, wireless status, nmcli wifi
+UNKNOWN - if the query does not clearly match any intent above
+
+Rules:
+- The user's query may contain spelling mistakes, missing words, casual grammar, or slang. Interpret by MEANING, not exact wording.
+- Treat these as equivalent synonyms: ram = memory; disk = storage = drive; cpu = processor; network = internet = wifi = connection; process = task = program; slow = laggy = sluggish.
+- Output ONLY the intent label, nothing else. No punctuation, no explanation, no quotes, no markdown.
+
+Examples:
+"what is my ram usage" -> GET_SYS_INFO
+"how much memory am i using" -> GET_SYS_INFO
+"why is my disk full" -> DISK_SPACE_ISSUE
+"show running processes sorted by memory" -> LIST_PROCESSES
+"show full list of processes" -> LIST_PROCESSES
+"kill process firefox" -> KILL_PROCESS
+"launch firefox" -> LAUNCH_PROCESS
+"what's the weather today" -> UNKNOWN
+
+User query: "{}"
+Intent:"#,
+        query
+    )
+}
+
+fn parse_intent(raw_response: &str, query: &str) -> Intent {
+    let cleaned = raw_response
+        .trim()
+        .trim_matches(|c: char| c == '"' || c == '\'' || c == '.' || c == '`')
+        .to_uppercase();
+
+    let first_token = cleaned.lines().next().unwrap_or("").trim();
+    let q_lower = query.to_lowercase();
+    let show_full = q_lower.contains("full") || q_lower.contains("all");
+
+    if first_token.contains("GET_SYS_INFO") {
+        Intent::GetSysInfo
+    } else if first_token.contains("DISK_SPACE_ISSUE") {
+        Intent::DiskSpaceIssue
+    } else if first_token.contains("LIST_PROCESSES") {
+        let sort_by = if q_lower.contains("mem") {
+            ProcessSort::Memory
+        } else if q_lower.contains("pid") {
+            ProcessSort::Pid
+        } else {
+            ProcessSort::Cpu
+        };
+        Intent::ListProcesses { sort_by, show_full }
+    } else if first_token.contains("KILL_PROCESS") {
+        Intent::KillProcess { name_or_pid: "".to_string(), force: false }
+    } else if first_token.contains("LAUNCH_PROCESS") {
+        // Parse KnownApp app names from query
+        let app = if q_lower.contains("terminal") {
+            KnownApp::Terminal
+        } else if q_lower.contains("file") {
+            KnownApp::FileManager
+        } else if q_lower.contains("edit") || q_lower.contains("nano") {
+            KnownApp::TextEditor
+        } else {
+            KnownApp::Firefox
+        };
+        Intent::LaunchProcess { app }
+    } else if first_token.contains("OPEN_APP") {
+        let app_name = if let Some(idx) = q_lower.find("open ") {
+            q_lower[idx + 5..].trim().to_string()
+        } else {
+            q_lower.clone()
+        };
+        Intent::OpenApp { app: app_name }
+    } else if first_token.contains("GET_IP_ADDRESS") {
+        Intent::GetIpAddress
+    } else if first_token.contains("GET_ROUTING_TABLE") {
+        Intent::GetRoutingTable
+    } else if first_token.contains("CHECK_INTERNET") {
+        Intent::CheckInternet
+    } else if first_token.contains("CHECK_WIFI") {
+        Intent::CheckWifi
+    } else {
+        eprintln!("[NLU Debug] Unrecognized raw LLM output: {:?}", raw_response);
+        Intent::Unknown
+    }
+}
+
+impl NluEngine {
+    pub fn new(llm_client: OllamaClient) -> Self {
+        Self {
+            llm_client,
+            sanitizer: QuerySanitizer::new(),
+        }
+    }
+
+    pub async fn classify_intent(&self, query: &str) -> Result<Intent, Box<dyn Error + Send + Sync>> {
+        let cleaned_query = self.sanitizer.sanitize(query);
+        println!("[NLU] Cleaned query: \"{}\" -> \"{}\"", query, cleaned_query);
+
+        if cleaned_query.is_empty() {
+            return Ok(Intent::Unknown);
+        }
+
+        // Check simple manual heuristics for name/PID extraction on process tasks
+        let normalized = cleaned_query.to_lowercase();
+        if normalized.starts_with("kill ") || normalized.starts_with("terminate ") || normalized.starts_with("stop ") {
+            let parts: Vec<&str> = normalized.split_whitespace().collect();
+            if parts.len() > 1 {
+                let name_or_pid = parts[1..].join(" ");
+                let force = normalized.contains("force") || normalized.contains("-9");
+                return Ok(Intent::KillProcess { name_or_pid, force });
+            }
+        } else if normalized.starts_with("launch ") || normalized.starts_with("run ") || normalized.starts_with("start ") {
+            let app = if normalized.contains("firefox") {
+                Some(KnownApp::Firefox)
+            } else if normalized.contains("terminal") {
+                Some(KnownApp::Terminal)
+            } else if normalized.contains("file") {
+                Some(KnownApp::FileManager)
+            } else if normalized.contains("edit") || normalized.contains("nano") {
+                Some(KnownApp::TextEditor)
+            } else {
+                None
+            };
+            if let Some(known) = app {
+                return Ok(Intent::LaunchProcess { app: known });
+            }
+        } else if normalized == "process" || normalized == "processes" || normalized == "ps" || normalized.starts_with("list process") || normalized.starts_with("list ps") || normalized.starts_with("show process") || normalized.starts_with("show ps") {
+            let sort_by = if normalized.contains("mem") {
+                ProcessSort::Memory
+            } else if normalized.contains("pid") {
+                ProcessSort::Pid
+            } else {
+                ProcessSort::Cpu
+            };
+            let show_full = normalized.contains("full") || normalized.contains("all");
+            return Ok(Intent::ListProcesses { sort_by, show_full });
+        } else if normalized == "ip" || normalized == "ip address" || normalized == "my ip" || normalized == "ifconfig" || normalized == "ip addr" || normalized == "lan" || normalized == "network" || normalized == "interfaces" {
+            return Ok(Intent::GetIpAddress);
+        } else if normalized == "route" || normalized == "routing" || normalized == "routing table" || normalized == "gateway" || normalized == "ip route" {
+            return Ok(Intent::GetRoutingTable);
+        } else if normalized == "internet" || normalized == "ping" || normalized == "ping test" || normalized == "check internet" || normalized.contains("connect to internet") || normalized == "online" {
+            return Ok(Intent::CheckInternet);
+        } else if normalized == "wifi" || normalized == "wireless" || normalized == "nmcli wifi" || normalized.contains("scan wifi") || normalized == "wlan" {
+            return Ok(Intent::CheckWifi);
+        }
+
+        // Fuzzy match application open requests (starts with open/launch/run/start or is a single-word app name)
+        let app_query = if normalized.starts_with("open ") {
+            Some(normalized[5..].trim())
+        } else if normalized.starts_with("launch ") {
+            Some(normalized[7..].trim())
+        } else if normalized.starts_with("run ") {
+            Some(normalized[4..].trim())
+        } else if normalized.starts_with("start ") {
+            Some(normalized[6..].trim())
+        } else if normalized.split_whitespace().count() == 1 {
+            Some(normalized.trim())
+        } else {
+            None
+        };
+
+        if let Some(app_q) = app_query {
+            let apps = load_cached_apps();
+            if let Some(matched_app_name) = find_fuzzy_match(app_q, &apps) {
+                return Ok(Intent::OpenApp { app: matched_app_name });
+            }
+        }
+
+        let prompt = build_classification_prompt(&cleaned_query);
+        let raw_response = self.llm_client.generate(&prompt).await?;
+        let intent = parse_intent(&raw_response, query);
+
+        if intent == Intent::Unknown {
+            eprintln!("[NLU Warning] Query classified as UNKNOWN: {:?} (raw LLM output: {:?})", query, raw_response);
+        }
+
+        Ok(intent)
+    }
+}
+
+fn load_cached_apps() -> Vec<(String, String)> {
+    use std::fs::{self, File};
+    use std::io::{BufRead, BufReader, Write};
+    use std::path::Path;
+
+    let cache_path = "/tmp/zyros_apps.txt";
+    let mut apps = Vec::new();
+
+    if Path::new(cache_path).exists() {
+        if let Ok(file) = File::open(cache_path) {
+            let reader = BufReader::new(file);
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    let parts: Vec<&str> = line.split('|').collect();
+                    if parts.len() == 2 {
+                        apps.push((parts[0].trim().to_string(), parts[1].trim().to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    if apps.is_empty() {
+        if let Ok(entries) = fs::read_dir("/usr/share/applications") {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("desktop") {
+                        if let Ok(file) = File::open(&path) {
+                            let reader = BufReader::new(file);
+                            let mut name = None;
+                            let mut exec = None;
+                            for line in reader.lines() {
+                                if let Ok(line) = line {
+                                    if line.starts_with("Name=") && name.is_none() {
+                                        name = Some(line["Name=".len()..].trim().to_string());
+                                    } else if line.starts_with("Exec=") && exec.is_none() {
+                                        let full_exec = line["Exec=".len()..].trim().to_string();
+                                        let cleaned_exec: Vec<&str> = full_exec
+                                            .split_whitespace()
+                                            .filter(|word| !word.starts_with('%'))
+                                            .collect();
+                                        exec = Some(cleaned_exec.join(" "));
+                                    }
+                                }
+                            }
+                            if let (Some(n), Some(e)) = (name, exec) {
+                                apps.push((n, e));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Ok(mut file) = File::create(cache_path) {
+            for (n, e) in &apps {
+                let _ = writeln!(file, "{} | {}", n, e);
+            }
+        }
+    }
+    apps
+}
+
+fn find_fuzzy_match(query: &str, apps: &[(String, String)]) -> Option<String> {
+    let q_lower = query.trim().to_lowercase();
+    if q_lower.is_empty() {
+        return None;
+    }
+
+    fn levenshtein(s1: &str, s2: &str) -> usize {
+        let len1 = s1.chars().count();
+        let len2 = s2.chars().count();
+        let mut dp = vec![vec![0; len2 + 1]; len1 + 1];
+        for i in 0..=len1 { dp[i][0] = i; }
+        for j in 0..=len2 { dp[0][j] = j; }
+        for (i, c1) in s1.chars().enumerate() {
+            for (j, c2) in s2.chars().enumerate() {
+                if c1 == c2 {
+                    dp[i + 1][j + 1] = dp[i][j];
+                } else {
+                    dp[i + 1][j + 1] = std::cmp::min(
+                        dp[i][j] + 1,
+                        std::cmp::min(dp[i][j + 1] + 1, dp[i + 1][j] + 1)
+                    );
+                }
+            }
+        }
+        dp[len1][len2]
+    }
+
+    fn is_subsequence(sub: &str, full: &str) -> bool {
+        let mut sub_chars = sub.chars().peekable();
+        for c in full.chars() {
+            if let Some(&sc) = sub_chars.peek() {
+                if sc == c {
+                    sub_chars.next();
+                }
+            } else {
+                return true;
+            }
+        }
+        sub_chars.peek().is_none()
+    }
+
+    let mut best_match = None;
+    let mut highest_score = 0.0;
+
+    for (name, exec) in apps {
+        let n_lower = name.to_lowercase();
+        let e_lower = exec.to_lowercase();
+
+        if n_lower == q_lower || e_lower == q_lower {
+            return Some(name.clone());
+        }
+
+        if n_lower.starts_with(&q_lower) || e_lower.starts_with(&q_lower) {
+            let score = 0.9;
+            if score > highest_score {
+                highest_score = score;
+                best_match = Some(name.clone());
+            }
+        } else if n_lower.contains(&q_lower) || e_lower.contains(&q_lower) {
+            let score = 0.8;
+            if score > highest_score {
+                highest_score = score;
+                best_match = Some(name.clone());
+            }
+        }
+
+        if is_subsequence(&q_lower, &n_lower) || is_subsequence(&q_lower, &e_lower) {
+            let score = 0.7 * (q_lower.len() as f64 / n_lower.len() as f64);
+            if score > highest_score && score > 0.4 {
+                highest_score = score;
+                best_match = Some(name.clone());
+            }
+        }
+
+        let dist_n = levenshtein(&q_lower, &n_lower);
+        let max_len_n = std::cmp::max(q_lower.len(), n_lower.len());
+        let sim_n = 1.0 - (dist_n as f64 / max_len_n as f64);
+
+        let dist_e = levenshtein(&q_lower, &e_lower);
+        let max_len_e = std::cmp::max(q_lower.len(), e_lower.len());
+        let sim_e = 1.0 - (dist_e as f64 / max_len_e as f64);
+
+        let sim = sim_n.max(sim_e);
+        if sim > highest_score && sim > 0.55 {
+            highest_score = sim;
+            best_match = Some(name.clone());
+        }
+    }
+
+    best_match
+}
