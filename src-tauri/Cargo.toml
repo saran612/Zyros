@@ -1,0 +1,20 @@
+[package]
+name = "zyros-desktop"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+tauri = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+zyros-core = { path = "../crates/zyros-core" }
+
+[features]
+# default to custom-protocol for production builds
+default = [ "custom-protocol" ]
+custom-protocol = [ "tauri/custom-protocol" ]
