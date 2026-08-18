@@ -1,0 +1,11 @@
+[package]
+name = "zyros-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true }
+clap = { workspace = true }
+zyros-core = { path = "../crates/zyros-core" }
+zyros-commands = { path = "../crates/zyros-commands" }
+rustyline = "12.0"
