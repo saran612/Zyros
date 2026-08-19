@@ -14,7 +14,7 @@ fn main() {
     let orchestrator = CoreOrchestrator::new(
         None, // localhost Ollama
         "llama3".to_string(), // Default local model
-        vec!["systemctl".to_string(), "uname".to_string(), "cat".to_string(), "ip".to_string(), "ping".to_string(), "nmcli".to_string()], // allowlist
+        vec!["systemctl".to_string(), "uname".to_string(), "cat".to_string(), "ip".to_string(), "ping".to_string(), "nmcli".to_string(), "ls".to_string()], // allowlist
     );
 
     let tray_menu = SystemTrayMenu::new()
