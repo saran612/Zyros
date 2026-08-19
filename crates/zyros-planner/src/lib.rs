@@ -20,6 +20,7 @@ pub enum Intent {
     GetRoutingTable,
     CheckInternet,
     CheckWifi,
+    ListDirectory { path: Option<String> },
     Unknown,
 }
 
@@ -50,6 +51,7 @@ impl Planner {
             Intent::GetRoutingTable => vec![zyros_commands::routing_table()],
             Intent::CheckInternet => vec![zyros_commands::internet_check()],
             Intent::CheckWifi => vec![zyros_commands::wifi_status()],
+            Intent::ListDirectory { path } => vec![zyros_commands::list_directory(path.clone())],
             Intent::Unknown => vec![],
         }
     }

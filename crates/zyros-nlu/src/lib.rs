@@ -30,6 +30,7 @@ GET_IP_ADDRESS - queries about IP address, IP configurations, local IP
 GET_ROUTING_TABLE - queries about network route, routing table, gateway
 CHECK_INTERNET - checks connection to internet, ping test, network check
 CHECK_WIFI - checks wifi connections, wireless status, nmcli wifi
+LIST_DIRECTORY - lists directory contents, list files, show folder files, ls
 UNKNOWN - if the query does not clearly match any intent above
 
 Rules:
@@ -45,6 +46,8 @@ Examples:
 "show full list of processes" -> LIST_PROCESSES
 "kill process firefox" -> KILL_PROCESS
 "launch firefox" -> LAUNCH_PROCESS
+"list files in current directory" -> LIST_DIRECTORY
+"ls /home/user" -> LIST_DIRECTORY
 "what's the weather today" -> UNKNOWN
 
 User query: "{}"
@@ -105,6 +108,15 @@ fn parse_intent(raw_response: &str, query: &str) -> Intent {
         Intent::CheckInternet
     } else if first_token.contains("CHECK_WIFI") {
         Intent::CheckWifi
+    } else if first_token.contains("LIST_DIRECTORY") {
+        let path = if q_lower.starts_with("ls ") {
+            Some(query[3..].trim().to_string())
+        } else if q_lower.starts_with("list files in ") {
+            Some(query[14..].trim().to_string())
+        } else {
+            None
+        };
+        Intent::ListDirectory { path }
     } else {
         eprintln!("[NLU Debug] Unrecognized raw LLM output: {:?}", raw_response);
         Intent::Unknown
@@ -126,6 +138,9 @@ impl NluEngine {
         if cleaned_query.is_empty() {
             return Ok(Intent::Unknown);
         }
+
+        let q_trimmed = query.trim();
+        let q_lower = q_trimmed.to_lowercase();
 
         // Check simple manual heuristics for name/PID extraction on process tasks
         let normalized = cleaned_query.to_lowercase();
@@ -169,12 +184,114 @@ impl NluEngine {
             return Ok(Intent::CheckInternet);
         } else if normalized == "wifi" || normalized == "wireless" || normalized == "nmcli wifi" || normalized.contains("scan wifi") || normalized == "wlan" {
             return Ok(Intent::CheckWifi);
+        } else if q_lower == "ls" || q_lower == "dir" || q_lower == "list files" || q_lower == "show files" || q_lower.starts_with("ls ") || q_lower.starts_with("dir ") || q_lower.starts_with("list files ") || q_lower.starts_with("show files ") {
+            // 0. Directory listing heuristics
+            let ls_query = if q_lower == "ls" || q_lower == "dir" || q_lower == "list files" || q_lower == "show files" {
+                Some(None)
+            } else if q_lower.starts_with("ls ") {
+                Some(Some(q_trimmed[3..].trim().to_string()))
+            } else if q_lower.starts_with("dir ") {
+                Some(Some(q_trimmed[4..].trim().to_string()))
+            } else if q_lower.starts_with("list files ") {
+                let path_part = q_trimmed[11..].trim();
+                let path_part_lower = path_part.to_lowercase();
+                if path_part_lower.starts_with("in ") {
+                    Some(Some(path_part[3..].trim().to_string()))
+                } else {
+                    Some(Some(path_part.to_string()))
+                }
+            } else if q_lower.starts_with("show files ") {
+                let path_part = q_trimmed[11..].trim();
+                let path_part_lower = path_part.to_lowercase();
+                if path_part_lower.starts_with("in ") {
+                    Some(Some(path_part[3..].trim().to_string()))
+                } else {
+                    Some(Some(path_part.to_string()))
+                }
+            } else {
+                None
+            };
+
+            let path = ls_query.flatten().filter(|p| !p.is_empty());
+            return Ok(Intent::ListDirectory { path });
         }
 
-        // Fuzzy match application open requests (starts with open/launch/run/start or is a single-word app name)
-        let app_query = if normalized.starts_with("open ") {
-            Some(normalized[5..].trim())
-        } else if normalized.starts_with("launch ") {
+        // 1. Create file heuristics
+        let create_query = if q_lower.starts_with("create ") {
+            Some(q_trimmed[7..].trim())
+        } else if q_lower.starts_with("touch ") {
+            Some(q_trimmed[6..].trim())
+        } else if q_lower.starts_with("new ") {
+            Some(q_trimmed[4..].trim())
+        } else {
+            None
+        };
+
+        if let Some(target) = create_query {
+            if target.contains('.') {
+                return Ok(Intent::CreateFile { path: target.to_string() });
+            } else {
+                let path = find_file_in_cwd(target).unwrap_or_else(|| target.to_string());
+                return Ok(Intent::CreateFile { path });
+            }
+        }
+
+        // 2. Modify / Edit file heuristics
+        let edit_query = if q_lower.starts_with("modify ") {
+            Some(q_trimmed[7..].trim())
+        } else if q_lower.starts_with("edit ") {
+            Some(q_trimmed[5..].trim())
+        } else if q_lower.starts_with("write ") {
+            Some(q_trimmed[6..].trim())
+        } else if q_lower.starts_with("nano ") {
+            Some(q_trimmed[5..].trim())
+        } else if q_lower.starts_with("vim ") {
+            Some(q_trimmed[4..].trim())
+        } else {
+            None
+        };
+
+        if let Some(target) = edit_query {
+            if target.contains('.') {
+                return Ok(Intent::EditFile { path: target.to_string() });
+            } else {
+                let path = find_file_in_cwd(target).unwrap_or_else(|| target.to_string());
+                return Ok(Intent::EditFile { path });
+            }
+        }
+
+        // 3. Open / Read / View / Show file or Open App heuristics
+        let open_query = if q_lower.starts_with("open ") {
+            Some(q_trimmed[5..].trim())
+        } else if q_lower.starts_with("view ") {
+            Some(q_trimmed[5..].trim())
+        } else if q_lower.starts_with("read ") {
+            Some(q_trimmed[5..].trim())
+        } else if q_lower.starts_with("cat ") {
+            Some(q_trimmed[4..].trim())
+        } else if q_lower.starts_with("show ") {
+            Some(q_trimmed[5..].trim())
+        } else {
+            None
+        };
+
+        if let Some(target) = open_query {
+            if target.contains('.') {
+                return Ok(Intent::ReadFile { path: target.to_string() });
+            } else {
+                let apps = load_cached_apps();
+                if let Some(matched_app_name) = find_fuzzy_match(target, &apps) {
+                    return Ok(Intent::OpenApp { app: matched_app_name });
+                }
+                if let Some(matched_file) = find_file_in_cwd(target) {
+                    return Ok(Intent::ReadFile { path: matched_file });
+                }
+                return Ok(Intent::OpenApp { app: target.to_string() });
+            }
+        }
+
+        // 4. Other Fuzzy match application launch requests (launch/run/start or single-word app names)
+        let other_app_query = if normalized.starts_with("launch ") {
             Some(normalized[7..].trim())
         } else if normalized.starts_with("run ") {
             Some(normalized[4..].trim())
@@ -186,7 +303,7 @@ impl NluEngine {
             None
         };
 
-        if let Some(app_q) = app_query {
+        if let Some(app_q) = other_app_query {
             let apps = load_cached_apps();
             if let Some(matched_app_name) = find_fuzzy_match(app_q, &apps) {
                 return Ok(Intent::OpenApp { app: matched_app_name });
@@ -358,4 +475,120 @@ fn find_fuzzy_match(query: &str, apps: &[(String, String)]) -> Option<String> {
     }
 
     best_match
+}
+
+fn find_file_in_cwd(target: &str) -> Option<String> {
+    let current_dir = std::env::current_dir().ok()?;
+    let entries = std::fs::read_dir(current_dir).ok()?;
+    let t_lower = target.to_lowercase();
+
+    let mut exact_match = None;
+    let mut starts_with_match = None;
+    let mut contains_match = None;
+
+    for entry in entries {
+        if let Ok(entry) = entry {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
+                    let filename_lower = filename.to_lowercase();
+                    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(filename);
+                    let stem_lower = stem.to_lowercase();
+
+                    if filename_lower == t_lower || stem_lower == t_lower {
+                        exact_match = Some(filename.to_string());
+                    } else if stem_lower.starts_with(&t_lower) {
+                        if starts_with_match.is_none() {
+                            starts_with_match = Some(filename.to_string());
+                        }
+                    } else if stem_lower.contains(&t_lower) {
+                        if contains_match.is_none() {
+                            contains_match = Some(filename.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    exact_match.or(starts_with_match).or(contains_match)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_find_file_in_cwd() {
+        // Since test runs in crate root, Cargo.toml is present.
+        assert_eq!(find_file_in_cwd("Cargo.toml").unwrap(), "Cargo.toml");
+        assert_eq!(find_file_in_cwd("cargo").unwrap(), "Cargo.toml");
+    }
+
+    #[tokio::test]
+    async fn test_classify_intent_open_file_with_extension() {
+        let client = OllamaClient::new(None, "dummy".to_string());
+        let engine = NluEngine::new(client);
+
+        let intent = engine.classify_intent("open file.txt").await.unwrap();
+        assert_eq!(intent, Intent::ReadFile { path: "file.txt".to_string() });
+    }
+
+    #[tokio::test]
+    async fn test_classify_intent_open_filename_alone() {
+        let client = OllamaClient::new(None, "dummy".to_string());
+        let engine = NluEngine::new(client);
+
+        // "cargo" should match "Cargo.toml" in CWD and resolve to ReadFile
+        let intent = engine.classify_intent("open cargo").await.unwrap();
+        assert_eq!(intent, Intent::ReadFile { path: "Cargo.toml".to_string() });
+
+        // Let's test a non-existent file/app. It should fallback to OpenApp.
+        let intent2 = engine.classify_intent("open non_existent_something_1234").await.unwrap();
+        assert_eq!(intent2, Intent::OpenApp { app: "non_existent_something_1234".to_string() });
+    }
+
+    #[tokio::test]
+    async fn test_classify_intent_create_and_modify() {
+        let client = OllamaClient::new(None, "dummy".to_string());
+        let engine = NluEngine::new(client);
+
+        // Create with extension
+        let intent1 = engine.classify_intent("create note.txt").await.unwrap();
+        assert_eq!(intent1, Intent::CreateFile { path: "note.txt".to_string() });
+
+        // Create filename alone matching cargo -> Cargo.toml
+        let intent2 = engine.classify_intent("create cargo").await.unwrap();
+        assert_eq!(intent2, Intent::CreateFile { path: "Cargo.toml".to_string() });
+
+        // Modify with extension
+        let intent3 = engine.classify_intent("modify note.txt").await.unwrap();
+        assert_eq!(intent3, Intent::EditFile { path: "note.txt".to_string() });
+
+        // Modify filename alone matching cargo -> Cargo.toml
+        let intent4 = engine.classify_intent("modify cargo").await.unwrap();
+        assert_eq!(intent4, Intent::EditFile { path: "Cargo.toml".to_string() });
+    }
+
+    #[tokio::test]
+    async fn test_classify_intent_list_directory() {
+        let client = OllamaClient::new(None, "dummy".to_string());
+        let engine = NluEngine::new(client);
+
+        // Simple "ls"
+        let intent1 = engine.classify_intent("ls").await.unwrap();
+        assert_eq!(intent1, Intent::ListDirectory { path: None });
+
+        // "ls /tmp"
+        let intent2 = engine.classify_intent("ls /tmp").await.unwrap();
+        assert_eq!(intent2, Intent::ListDirectory { path: Some("/tmp".to_string()) });
+
+        // "list files in /etc"
+        let intent3 = engine.classify_intent("list files in /etc").await.unwrap();
+        assert_eq!(intent3, Intent::ListDirectory { path: Some("/etc".to_string()) });
+
+        // "show files"
+        let intent4 = engine.classify_intent("show files").await.unwrap();
+        assert_eq!(intent4, Intent::ListDirectory { path: None });
+    }
 }

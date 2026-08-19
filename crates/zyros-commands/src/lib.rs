@@ -250,3 +250,18 @@ pub fn wifi_status() -> CommandTemplate {
         description: "Check nearby WiFi access points",
     }
 }
+
+pub fn list_directory(path: Option<String>) -> CommandTemplate {
+    let mut args = vec!["-la".to_string()];
+    if let Some(p) = path {
+        args.push(p);
+    }
+    CommandTemplate {
+        name: "list_directory",
+        program: "ls",
+        args,
+        mutating: false,
+        requires_sudo: false,
+        description: "List directory contents",
+    }
+}

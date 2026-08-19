@@ -103,7 +103,8 @@ async fn main() {
             "cat".to_string(),
             "ip".to_string(),
             "ping".to_string(),
-            "nmcli".to_string()
+            "nmcli".to_string(),
+            "ls".to_string()
         ], // Allowlist
     );
 
