@@ -1,9 +1,9 @@
 {
   "build": {
     "distDir": "../ui/dist",
-    "devPath": "../ui/dist",
-    "beforeDevCommand": "",
-    "beforeBuildCommand": ""
+    "devPath": "http://localhost:1420",
+    "beforeDevCommand": "npm --prefix ../ui run dev",
+    "beforeBuildCommand": "npm --prefix ../ui run build"
   },
   "package": {
     "productName": "zyros",
