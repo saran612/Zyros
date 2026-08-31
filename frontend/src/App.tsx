@@ -32,6 +32,12 @@ interface InstallingStatus {
   message: string;
 }
 
+interface ChatSessionItem {
+  id: string;
+  title: string;
+  created_at: string;
+}
+
 function App() {
   const [loading, setLoading] = useState<boolean>(true)
   const [onboarded, setOnboarded] = useState<boolean>(false)
@@ -45,6 +51,9 @@ function App() {
   const [provider, setProvider] = useState<string>(() => localStorage.getItem("zyros_api_provider") || "openai")
   const [activeModel, setActiveModel] = useState<string>('')
 
+  const [chatSessions, setChatSessions] = useState<ChatSessionItem[]>([])
+  const [activeSessionId, setActiveSessionId] = useState<string>('')
+
   const [submitting, setSubmitting] = useState<boolean>(false)
   const [errorMsg, setErrorMsg] = useState<string>('')
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true)
@@ -52,6 +61,25 @@ function App() {
   // Real-time progress updates state
   const [installingStatus, setInstallingStatus] = useState<InstallingStatus | null>(null)
   const [activeEventSource, setActiveEventSource] = useState<EventSource | null>(null)
+
+  const loadChatSessions = () => {
+    fetch(`${API_BASE}/chat/sessions`)
+      .then((res) => {
+        if (!res.ok) return [];
+        return res.json() as Promise<ChatSessionItem[]>;
+      })
+      .then((sessions) => {
+        setChatSessions(sessions || []);
+        if (sessions && sessions.length > 0 && !activeSessionId) {
+          setActiveSessionId(sessions[0].id);
+        }
+      })
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    loadChatSessions();
+  }, [])
 
   // Check onboarding status on load
   useEffect(() => {
@@ -183,20 +211,20 @@ function App() {
         } else if (data.status === 'failed') {
           es.close()
           setActiveEventSource(null)
-          alert(`Failed: ${data.message}`)
-          setInstallingStatus(null)
         }
       } catch (err) {
-        console.error("Failed to parse event:", err)
+        console.error("Stream parse error:", err)
       }
     }
 
-    es.onerror = (e) => {
-      console.error("SSE connection error:", e)
+    es.onerror = () => {
       es.close()
       setActiveEventSource(null)
-      setInstallingStatus(null)
-      alert("Lost connection to installation service.")
+      setInstallingStatus({
+        status: 'failed',
+        percentage: 0,
+        message: 'Streaming connection failed or was interrupted.'
+      })
     }
   }
 
@@ -206,8 +234,12 @@ function App() {
       setActiveEventSource(null)
     }
 
-    fetch(`${API_BASE}/onboard/cancel-run`, { method: 'POST' })
-      .then(() => {
+    fetch(`${API_BASE}/onboard/cancel-run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to abort operation on server')
         setInstallingStatus(null)
       })
       .catch((err) => {
@@ -241,22 +273,41 @@ function App() {
     )
   }
 
+  const handleNewChat = () => {
+    const newId = `sess_${Date.now()}`;
+    setActiveSessionId(newId);
+    setActivePage('home');
+  };
+
   return (
     <div className="flex h-screen w-full bg-black text-zinc-300 overflow-hidden">
       {/* Navigation Sidebar */}
       <Sidebar
-        activePage={activePage === 'ollama' ? 'recommendations' : activePage}
         onNavigate={(page) => setActivePage(page)}
         username={username}
         isOpen={sidebarOpen}
         onToggle={() => setSidebarOpen(!sidebarOpen)}
+        onNewChat={handleNewChat}
+        chatSessions={chatSessions}
+        activeSessionId={activeSessionId}
+        onSelectSession={(id) => {
+          setActiveSessionId(id);
+          setActivePage('home');
+        }}
       />
 
       {/* Content Canvas */}
-      <div className="flex-1 h-full overflow-y-auto flex flex-col items-center py-6 pb-24 px-4 w-full relative">
-        <div className="w-full flex justify-center">
+      <div className={`flex-1 h-full flex flex-col items-center w-full relative ${
+        activePage === 'home' ? 'p-0 overflow-hidden' : 'py-6 pb-24 px-4 overflow-y-auto'
+      }`}>
+        <div className={`w-full flex justify-center ${activePage === 'home' ? 'h-full' : ''}`}>
           {activePage === 'home' ? (
-            <Home />
+            <Home
+              currentSessionId={activeSessionId}
+              onSessionUpdated={(_session) => {
+                loadChatSessions();
+              }}
+            />
           ) : activePage === 'dashboard' ? (
             <SystemSpecification
               username={username}
