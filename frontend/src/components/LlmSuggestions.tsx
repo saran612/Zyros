@@ -22,88 +22,96 @@ export const LlmSuggestions: React.FC<LlmSuggestionsProps> = ({
   onSelectModel,
   hasApiKeyConfigured,
 }) => {
-  const [selected, setSelected] = useState<LlmSuggestion | null>(null)
-
-  if (suggestions.length === 0) return null;
+  const [activeTab, setActiveTab] = useState<'local' | 'cloud'>('local')
 
   return (
-    <div className="w-full max-w-4xl mt-4 px-4 text-left">
-      <div className="text-center mb-8">
-        <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white mb-2">Recommended Local LLMs</h1>
-        <p className="text-purple-400 font-medium text-lg">
-          Best models for your hardware configuration
+    <div className="w-full max-w-3xl py-8 px-4 text-left font-['Clash_Display',sans-serif] text-black">
+      {/* Brand & Heading */}
+      <div className="flex flex-col items-center mb-6 text-center select-none">
+        <img src="/assets/images/logo.png" alt="Zyros" className="w-14 h-14 mb-2 object-contain" />
+        <h1 className="text-3xl font-semibold text-black tracking-tight">Configure Your Model</h1>
+        <p className="text-neutral-600 text-sm mt-1">
+          Choose a recommended local open-weight model or configure cloud API access
         </p>
       </div>
 
-      <div className="border-b border-zinc-850 pb-3 mb-4 w-full">
-        <h2 className="text-2xl font-semibold text-white">
-          Recommended Local LLMs
-        </h2>
+      {/* Tabs */}
+      <div className="flex justify-center mb-6">
+        <div className="inline-flex p-1 bg-white border border-[#bdbdbd] rounded-full shadow-sm">
+          <button
+            onClick={() => setActiveTab('local')}
+            className={`px-5 py-1.5 rounded-full text-xs font-medium transition-all ${
+              activeTab === 'local'
+                ? 'bg-black text-white shadow-sm'
+                : 'text-neutral-600 hover:text-black'
+            }`}
+          >
+            Local Models
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('cloud')
+              onGoToByok()
+            }}
+            className={`px-5 py-1.5 rounded-full text-xs font-medium transition-all ${
+              activeTab === 'cloud'
+                ? 'bg-black text-white shadow-sm'
+                : 'text-neutral-600 hover:text-black'
+            }`}
+          >
+            Cloud Models (BYOK)
+          </button>
+        </div>
       </div>
 
-      <p className="text-zinc-400 text-sm mb-6">
-        Based on your system specifications (especially RAM and GPU configurations), these are the best models to run locally. Select a model below to configure.
-      </p>
+      {/* Local Model Cards list matching opsy setup */}
+      <div className="bg-white border border-[#bdbdbd] rounded-2xl p-6 shadow-sm space-y-4">
+        <div className="flex justify-between items-center pb-3 border-b border-neutral-100">
+          <span className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            Recommended for your Hardware
+          </span>
+          <span className="text-xs text-neutral-500 font-medium">
+            {suggestions.length} available
+          </span>
+        </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
-        {suggestions.map((model, idx) => {
-          const isSelected = selected?.name === model.name;
-          return (
+        <div className="space-y-3">
+          {suggestions.map((model, idx) => (
             <div
               key={idx}
-              onClick={() => setSelected(model)}
-              className={`border rounded-xl p-6 flex flex-col justify-between hover:-translate-y-0.5 cursor-pointer transition-all duration-300 shadow-md ${
-                isSelected
-                  ? "bg-purple-950/15 border-purple-500 shadow-purple-950/20"
-                  : "bg-zinc-900/30 border-zinc-850 hover:border-purple-900/40"
-              }`}
+              className="flex items-center justify-between p-4 border border-[#bdbdbd] hover:border-black rounded-xl bg-transparent transition-all group"
             >
-              <div>
-                <div className="flex justify-between items-start gap-4 mb-3">
-                  <h3 className={`font-bold text-lg leading-snug transition-colors ${
-                    isSelected ? "text-purple-300" : "text-purple-400"
-                  }`}>
-                    {model.name}
-                  </h3>
-                  <span className="text-purple-300 bg-purple-900/20 text-[10px] uppercase font-bold tracking-wider px-2.5 py-1 rounded-md border border-purple-500/20 whitespace-nowrap">
+              <div className="flex flex-col pr-4">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-sm text-black">{model.name}</span>
+                  <span className="text-[10px] font-medium bg-[#faf5ea] border border-[#bdbdbd]/80 px-2 py-0.5 rounded-full text-neutral-700">
                     {model.size}
                   </span>
                 </div>
-                <p className="text-zinc-400 text-sm leading-relaxed mb-4">
+                <p className="text-neutral-600 text-xs mt-1 font-sans line-clamp-1">
                   {model.description}
                 </p>
               </div>
 
-              <div className="pt-3 border-t border-zinc-850/50 flex items-center justify-between text-xs text-zinc-500">
-                <span>GPU Acceleration</span>
-                <span className={`font-semibold ${model.gpu_accel.includes('None') ? 'text-red-500' : 'text-green-500'}`}>
-                  {model.gpu_accel}
-                </span>
-              </div>
+              <button
+                onClick={() => onSelectModel(model)}
+                className="bg-transparent hover:bg-black hover:text-white text-black border border-[#bdbdbd] hover:border-black rounded-full px-4 py-1.5 text-xs font-medium transition-all shrink-0 active:scale-95"
+              >
+                Configure
+              </button>
             </div>
-          )
-        })}
-      </div>
+          ))}
+        </div>
 
-      {/* Navigation Buttons Row */}
-      <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mt-8 pt-6 border-t border-zinc-850">
-        <button
-          onClick={onGoToByok}
-          className="w-full sm:w-auto text-xs bg-zinc-900 hover:bg-zinc-850 text-zinc-300 font-bold px-6 py-3.5 rounded-lg border border-zinc-800 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-        >
-          <span>🔑</span> {hasApiKeyConfigured ? "Manage API Key" : "Bring Your Own API Key"}
-        </button>
-        <button
-          disabled={!selected}
-          onClick={() => selected && onSelectModel(selected)}
-          className={`w-full sm:w-auto px-8 py-3.5 rounded-lg font-bold text-xs uppercase tracking-wider transition-all shadow-lg active:scale-[0.98] ${
-            selected
-              ? "bg-purple-600 hover:bg-purple-500 text-white shadow-purple-950/30 cursor-pointer"
-              : "bg-zinc-950 text-zinc-600 border border-zinc-850/40 cursor-not-allowed"
-          }`}
-        >
-          Continue
-        </button>
+        {/* Footer info link */}
+        <div className="pt-4 border-t border-neutral-100 flex items-center justify-between">
+          <button
+            onClick={onGoToByok}
+            className="text-xs text-neutral-600 hover:text-black font-medium underline transition-colors"
+          >
+            {hasApiKeyConfigured ? 'Change Cloud API Key' : 'Prefer to use OpenAI / Claude / Gemini API?'}
+          </button>
+        </div>
       </div>
     </div>
   )
