@@ -91,8 +91,8 @@ async fn main() {
         .merge(chat_router)
         .layer(cors);
 
-    // Run our app, listening on port 8000
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8000));
+    // Run our app, listening on port 8008
+    let addr = SocketAddr::from(([0, 0, 0, 0], 8008));
     info!("Server starting up on {}", addr);
     println!("Server running on http://{}", addr);
 
