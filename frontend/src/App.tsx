@@ -10,7 +10,7 @@ import { SystemSpecification } from './components/SystemSpecification'
 import { Home } from './components/Home'
 import { Sidebar } from './components/layout/Sidebar'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = 'http://localhost:8008'
 
 interface ApiKeyConfig {
   provider: string;
@@ -152,7 +152,7 @@ function App() {
   }
 
   const handleSaveApiKey = (newProvider: string, newKey: string) => {
-    fetch(`${API_BASE}/onboard/api-key`, {
+    return fetch(`${API_BASE}/onboard/api-key`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: newProvider, key: newKey })
@@ -164,11 +164,9 @@ function App() {
         setActiveModel('') // reset local model since switched to cloud
         localStorage.setItem("zyros_api_key", newKey)
         localStorage.setItem("zyros_api_provider", newProvider)
-        alert("API Key saved successfully!")
-        setActivePage('home')
-      })
-      .catch((err) => {
-        alert(`Error: ${err.message}`)
+        setTimeout(() => {
+          setActivePage('home')
+        }, 800)
       })
   }
 
@@ -207,7 +205,7 @@ function App() {
           setTimeout(() => {
             setInstallingStatus(null)
             setActivePage('home')
-          }, 2000)
+          }, 1500)
         } else if (data.status === 'failed') {
           es.close()
           setActiveEventSource(null)
@@ -250,11 +248,12 @@ function App() {
 
   if (loading) {
     return (
-      <div id="center" className="flex items-center justify-center min-h-screen bg-black">
-        <div className="text-center">
-          <h1 className="text-5xl font-bold tracking-tight text-white mb-4">Zyros</h1>
-          <div className="text-purple-500 font-medium text-lg animate-pulse">
-            Analyzing configuration...
+      <div id="center" className="flex items-center justify-center min-h-screen bg-[#faf5ea] font-['Clash_Display',sans-serif]">
+        <div className="text-center flex flex-col items-center">
+          <img src="/assets/images/logo.png" alt="Zyros" className="w-16 h-16 mb-4 object-contain animate-pulse" />
+          <h1 className="text-3xl font-semibold tracking-tight text-black mb-2">Zyros</h1>
+          <div className="text-neutral-500 font-medium text-sm">
+            Initializing workspace...
           </div>
         </div>
       </div>
@@ -263,7 +262,7 @@ function App() {
 
   if (!onboarded) {
     return (
-      <div id="center" className="flex flex-col min-h-screen bg-black text-zinc-300">
+      <div id="center" className="flex flex-col min-h-screen bg-[#faf5ea] text-black">
         <Onboarding
           submitting={submitting}
           errorMsg={errorMsg}
@@ -280,7 +279,7 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-black text-zinc-300 overflow-hidden">
+    <div className="flex h-screen w-full bg-[#faf5ea] text-black overflow-hidden font-['Clash_Display',sans-serif]">
       {/* Navigation Sidebar */}
       <Sidebar
         onNavigate={(page) => setActivePage(page)}
@@ -297,8 +296,8 @@ function App() {
       />
 
       {/* Content Canvas */}
-      <div className={`flex-1 h-full flex flex-col items-center w-full relative ${
-        activePage === 'home' ? 'p-0 overflow-hidden' : 'py-6 pb-24 px-4 overflow-y-auto'
+      <div className={`flex-1 h-full flex flex-col items-center w-full relative bg-[#faf5ea] ${
+        activePage === 'home' ? 'p-0 overflow-hidden' : 'py-6 pb-16 px-4 overflow-y-auto'
       }`}>
         <div className={`w-full flex justify-center ${activePage === 'home' ? 'h-full' : ''}`}>
           {activePage === 'home' ? (
@@ -307,6 +306,8 @@ function App() {
               onSessionUpdated={(_session) => {
                 loadChatSessions();
               }}
+              activeModel={activeModel}
+              provider={provider}
             />
           ) : activePage === 'dashboard' ? (
             <SystemSpecification
