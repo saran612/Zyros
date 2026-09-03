@@ -1,0 +1,35 @@
+{
+  "app": {
+    "name": "Zyros",
+    "version": "1.0.0",
+    "description": "Intelligent local-first Linux workstation copilot and LLM orchestration engine",
+    "env": "development"
+  },
+  "server": {
+    "backend_host": "0.0.0.0",
+    "backend_port": 8008,
+    "backend_url": "http://localhost:8008",
+    "frontend_port": 5173,
+    "frontend_url": "http://localhost:5173"
+  },
+  "models": {
+    "default_local_provider": "ollama",
+    "ollama_host": "http://localhost:11434",
+    "supported_cloud_providers": [
+      "openai",
+      "anthropic",
+      "gemini",
+      "groq"
+    ]
+  },
+  "hardware": {
+    "scan_on_startup": true,
+    "probe_gpu": true
+  },
+  "desktop": {
+    "width": 1100,
+    "height": 800,
+    "frameless": false,
+    "theme": "parchment"
+  }
+}
